@@ -407,9 +407,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Squad activity logs (per issue)
-			r.Get("/api/issues/{issueId}/squad-activity", h.ListSquadActivityLogs)
-			r.Post("/api/squad-activity", h.CreateSquadActivityLog)
+			// Squad leader evaluation (writes to activity_log)
+			r.Post("/api/issues/{id}/squad-evaluated", h.RecordSquadLeaderEvaluation)
 
 			// Autopilots
 			r.Route("/api/autopilots", func(r chi.Router) {

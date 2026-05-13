@@ -68,17 +68,6 @@ JOIN squad_member sm ON sm.squad_id = s.id
 WHERE s.workspace_id = $1 AND sm.member_type = $2 AND sm.member_id = $3
 ORDER BY s.created_at ASC;
 
--- name: CreateSquadActivityLog :one
-INSERT INTO squad_activity_log (squad_id, issue_id, trigger_comment_id, leader_id, outcome, details)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING *;
-
--- name: ListSquadActivityLogs :many
-SELECT * FROM squad_activity_log
-WHERE issue_id = $1
-ORDER BY created_at DESC
-LIMIT $2;
-
 -- name: TransferSquadAssignees :exec
 -- Transfer all issues assigned to a squad to the squad's leader agent.
 UPDATE issue SET assignee_type = 'agent', assignee_id = $2, updated_at = now()

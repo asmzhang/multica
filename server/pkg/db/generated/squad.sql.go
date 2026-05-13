@@ -125,44 +125,6 @@ func (q *Queries) CreateSquad(ctx context.Context, arg CreateSquadParams) (Squad
 	return i, err
 }
 
-const createSquadActivityLog = `-- name: CreateSquadActivityLog :one
-INSERT INTO squad_activity_log (squad_id, issue_id, trigger_comment_id, leader_id, outcome, details)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, squad_id, issue_id, trigger_comment_id, leader_id, outcome, details, created_at
-`
-
-type CreateSquadActivityLogParams struct {
-	SquadID          pgtype.UUID `json:"squad_id"`
-	IssueID          pgtype.UUID `json:"issue_id"`
-	TriggerCommentID pgtype.UUID `json:"trigger_comment_id"`
-	LeaderID         pgtype.UUID `json:"leader_id"`
-	Outcome          string      `json:"outcome"`
-	Details          []byte      `json:"details"`
-}
-
-func (q *Queries) CreateSquadActivityLog(ctx context.Context, arg CreateSquadActivityLogParams) (SquadActivityLog, error) {
-	row := q.db.QueryRow(ctx, createSquadActivityLog,
-		arg.SquadID,
-		arg.IssueID,
-		arg.TriggerCommentID,
-		arg.LeaderID,
-		arg.Outcome,
-		arg.Details,
-	)
-	var i SquadActivityLog
-	err := row.Scan(
-		&i.ID,
-		&i.SquadID,
-		&i.IssueID,
-		&i.TriggerCommentID,
-		&i.LeaderID,
-		&i.Outcome,
-		&i.Details,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const getSquad = `-- name: GetSquad :one
 SELECT id, workspace_id, name, description, leader_id, creator_id, created_at, updated_at, archived_at, archived_by, avatar_url, instructions FROM squad WHERE id = $1
 `
@@ -292,47 +254,6 @@ func (q *Queries) ListAllSquads(ctx context.Context, workspaceID pgtype.UUID) ([
 			&i.ArchivedBy,
 			&i.AvatarUrl,
 			&i.Instructions,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listSquadActivityLogs = `-- name: ListSquadActivityLogs :many
-SELECT id, squad_id, issue_id, trigger_comment_id, leader_id, outcome, details, created_at FROM squad_activity_log
-WHERE issue_id = $1
-ORDER BY created_at DESC
-LIMIT $2
-`
-
-type ListSquadActivityLogsParams struct {
-	IssueID pgtype.UUID `json:"issue_id"`
-	Limit   int32       `json:"limit"`
-}
-
-func (q *Queries) ListSquadActivityLogs(ctx context.Context, arg ListSquadActivityLogsParams) ([]SquadActivityLog, error) {
-	rows, err := q.db.Query(ctx, listSquadActivityLogs, arg.IssueID, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []SquadActivityLog{}
-	for rows.Next() {
-		var i SquadActivityLog
-		if err := rows.Scan(
-			&i.ID,
-			&i.SquadID,
-			&i.IssueID,
-			&i.TriggerCommentID,
-			&i.LeaderID,
-			&i.Outcome,
-			&i.Details,
-			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

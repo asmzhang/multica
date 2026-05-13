@@ -38,17 +38,6 @@ type SquadMemberResponse struct {
 	CreatedAt  string `json:"created_at"`
 }
 
-type SquadActivityLogResponse struct {
-	ID               string  `json:"id"`
-	SquadID          string  `json:"squad_id"`
-	IssueID          string  `json:"issue_id"`
-	TriggerCommentID *string `json:"trigger_comment_id"`
-	LeaderID         string  `json:"leader_id"`
-	Outcome          string  `json:"outcome"`
-	Details          any     `json:"details"`
-	CreatedAt        string  `json:"created_at"`
-}
-
 // ── Converters ──────────────────────────────────────────────────────────────
 
 func squadToResponse(s db.Squad) SquadResponse {
@@ -76,23 +65,6 @@ func squadMemberToResponse(m db.SquadMember) SquadMemberResponse {
 		MemberID:   uuidToString(m.MemberID),
 		Role:       m.Role,
 		CreatedAt:  timestampToString(m.CreatedAt),
-	}
-}
-
-func squadActivityLogToResponse(l db.SquadActivityLog) SquadActivityLogResponse {
-	var details any
-	if l.Details != nil {
-		json.Unmarshal(l.Details, &details)
-	}
-	return SquadActivityLogResponse{
-		ID:               uuidToString(l.ID),
-		SquadID:          uuidToString(l.SquadID),
-		IssueID:          uuidToString(l.IssueID),
-		TriggerCommentID: uuidToPtr(l.TriggerCommentID),
-		LeaderID:         uuidToString(l.LeaderID),
-		Outcome:          l.Outcome,
-		Details:          details,
-		CreatedAt:        timestampToString(l.CreatedAt),
 	}
 }
 
@@ -510,49 +482,20 @@ func (h *Handler) UpdateSquadMemberRole(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, squadMemberToResponse(sm))
 }
 
-// ── Squad Activity Log ──────────────────────────────────────────────────────
+// ── Squad Leader Evaluation ──────────────────────────────────────────────────
 
-func (h *Handler) ListSquadActivityLogs(w http.ResponseWriter, r *http.Request) {
-	issueID := chi.URLParam(r, "issueId")
-	// Validate issue belongs to current workspace.
-	issue, ok := h.loadIssueForUser(w, r, issueID)
-	if !ok {
-		return
-	}
-
-	logs, err := h.Queries.ListSquadActivityLogs(r.Context(), db.ListSquadActivityLogsParams{
-		IssueID: issue.ID,
-		Limit:   50,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list squad activity logs")
-		return
-	}
-
-	resp := make([]SquadActivityLogResponse, len(logs))
-	for i, l := range logs {
-		resp[i] = squadActivityLogToResponse(l)
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (h *Handler) CreateSquadActivityLog(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	if workspaceID == "" {
-		writeError(w, http.StatusBadRequest, "workspace_id is required")
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+// RecordSquadLeaderEvaluation records a squad leader's evaluation decision
+// into the unified activity_log. Called by the leader agent via CLI after
+// each trigger to record whether it took action, stayed silent, or failed.
+func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Request) {
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
 		return
 	}
 
 	var req struct {
-		SquadID          string `json:"squad_id"`
-		IssueID          string `json:"issue_id"`
-		TriggerCommentID string `json:"trigger_comment_id"`
-		Outcome          string `json:"outcome"`
-		Details          any    `json:"details"`
+		Outcome string `json:"outcome"` // action | no_action | failed
+		Reason  string `json:"reason"`  // short explanation from leader
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -564,72 +507,54 @@ func (h *Handler) CreateSquadActivityLog(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	squadUUID, ok := parseUUIDOrBadRequest(w, req.SquadID, "squad_id")
-	if !ok {
-		return
-	}
-	issueUUID, ok := parseUUIDOrBadRequest(w, req.IssueID, "issue_id")
-	if !ok {
+	// The issue must be assigned to a squad.
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
+		writeError(w, http.StatusBadRequest, "issue is not assigned to a squad")
 		return
 	}
 
-	// Validate squad belongs to this workspace.
 	squad, err := h.Queries.GetSquadInWorkspace(r.Context(), db.GetSquadInWorkspaceParams{
-		ID:          squadUUID,
-		WorkspaceID: wsUUID,
+		ID:          issue.AssigneeID,
+		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "squad not found in this workspace")
+		writeError(w, http.StatusNotFound, "squad not found")
 		return
 	}
 
-	// Validate issue belongs to this workspace.
-	if _, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
-		ID:          issueUUID,
-		WorkspaceID: wsUUID,
-	}); err != nil {
-		writeError(w, http.StatusNotFound, "issue not found in this workspace")
-		return
-	}
-
-	// Security: only the squad leader agent can write activity logs.
+	// Security: only the squad leader agent can record evaluations.
+	workspaceID := uuidToString(issue.WorkspaceID)
 	userID := requestUserID(r)
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	if actorType != "agent" || actorID != uuidToString(squad.LeaderID) {
-		writeError(w, http.StatusForbidden, "only the squad leader agent can record activity")
+		writeError(w, http.StatusForbidden, "only the squad leader agent can record evaluations")
 		return
 	}
 
-	var triggerCommentUUID pgtype.UUID
-	if req.TriggerCommentID != "" {
-		triggerCommentUUID, ok = parseUUIDOrBadRequest(w, req.TriggerCommentID, "trigger_comment_id")
-		if !ok {
-			return
-		}
-	}
+	details, _ := json.Marshal(map[string]string{
+		"squad_id": uuidToString(squad.ID),
+		"outcome":  req.Outcome,
+		"reason":   req.Reason,
+	})
 
-	var detailsJSON []byte
-	if req.Details != nil {
-		detailsJSON, _ = json.Marshal(req.Details)
-	}
-	if detailsJSON == nil {
-		detailsJSON = []byte("{}")
-	}
-
-	log, err := h.Queries.CreateSquadActivityLog(r.Context(), db.CreateSquadActivityLogParams{
-		SquadID:          squadUUID,
-		IssueID:          issueUUID,
-		TriggerCommentID: triggerCommentUUID,
-		LeaderID:         squad.LeaderID,
-		Outcome:          req.Outcome,
-		Details:          detailsJSON,
+	activity, err := h.Queries.CreateActivity(r.Context(), db.CreateActivityParams{
+		WorkspaceID: issue.WorkspaceID,
+		IssueID:     issue.ID,
+		ActorType:   pgtype.Text{String: "agent", Valid: true},
+		ActorID:     squad.LeaderID,
+		Action:      "squad_leader_evaluated",
+		Details:     details,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create squad activity log")
+		writeError(w, http.StatusInternalServerError, "failed to record evaluation")
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, squadActivityLogToResponse(log))
+	writeJSON(w, http.StatusCreated, map[string]string{
+		"id":         uuidToString(activity.ID),
+		"action":     activity.Action,
+		"created_at": timestampToString(activity.CreatedAt),
+	})
 }
 
 // ── Squad Trigger Logic ─────────────────────────────────────────────────────
@@ -650,13 +575,10 @@ func (h *Handler) shouldEnqueueSquadLeaderOnComment(ctx context.Context, issue d
 		return false
 	}
 
-	// Check if the author is a squad member (anti-loop: squad members don't trigger leader).
-	isMember, err := h.Queries.IsSquadMember(ctx, db.IsSquadMemberParams{
-		SquadID:    squad.ID,
-		MemberType: authorType,
-		MemberID:   parseUUID(authorID),
-	})
-	if err == nil && isMember {
+	// Skip if the comment author is the squad leader itself (prevent self-trigger).
+	// Other squad members ARE allowed to trigger the leader — the leader uses
+	// silent/no-op turns when no action is needed.
+	if authorType == "agent" && authorID == uuidToString(squad.LeaderID) {
 		return false
 	}
 

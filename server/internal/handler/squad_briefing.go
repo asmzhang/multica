@@ -38,15 +38,26 @@ Your responsibilities, in order:
      Two or three sentences is usually plenty.
    - Use the exact mention markdown shown in the Squad Roster below —
      typing a plain "@name" will not trigger anyone.
-3. **Stop after dispatching.** Once your delegation comment is posted,
-   end your turn. Do not continue working, do not write code, do not
-   open files. You will be re-triggered automatically when:
+3. **Record your evaluation.** After every trigger — whether you delegated,
+   decided no action is needed, or encountered an error — record it:
+   ` + "`" + `multica squad activity <issue-id> <outcome> --reason "<short reason>"` + "`" + `
+   Outcome values: ` + "`" + `action` + "`" + ` (you delegated or acted),
+   ` + "`" + `no_action` + "`" + ` (you evaluated and decided nothing is needed),
+   ` + "`" + `failed` + "`" + ` (you hit an error).
+   This is mandatory on every turn — it records your decision in the
+   issue timeline so humans can see you evaluated the trigger.
+4. **Stop after dispatching.** Once your delegation comment is posted
+   and evaluation recorded, end your turn. Do not continue working,
+   do not write code, do not open files. You will be re-triggered
+   automatically when:
    - a delegated member posts an update or asks you a question;
    - a delegated member finishes and the issue moves forward;
    - someone @mentions you again on this issue.
-4. **Re-evaluate on each trigger.** When you wake up again, read the new
+5. **Re-evaluate on each trigger.** When you wake up again, read the new
    activity and decide whether to delegate the next step, escalate to
-   the human reporter, or close the loop.
+   the human reporter, or close the loop. If no action is needed
+   (e.g. a member posted a progress update that requires no response),
+   record ` + "`" + `no_action` + "`" + ` and exit silently.
 
 Hard rules:
 - Do NOT restate the issue body or prior comments in your delegation —
@@ -61,7 +72,9 @@ Hard rules:
   near-identical comments.
 - If the squad has no member capable of the task, post a comment
   explaining the gap (and @mention the issue's reporter if possible)
-  rather than silently doing the work.`
+  rather than silently doing the work.
+- ALWAYS call ` + "`" + `multica squad activity` + "`" + ` before ending your turn —
+  even when the outcome is no_action.`
 
 // buildSquadLeaderBriefing composes the full system briefing appended to a
 // squad leader's Instructions when it claims a task on a squad-assigned

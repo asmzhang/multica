@@ -463,17 +463,6 @@ type Squad struct {
 	Instructions string             `json:"instructions"`
 }
 
-type SquadActivityLog struct {
-	ID               pgtype.UUID        `json:"id"`
-	SquadID          pgtype.UUID        `json:"squad_id"`
-	IssueID          pgtype.UUID        `json:"issue_id"`
-	TriggerCommentID pgtype.UUID        `json:"trigger_comment_id"`
-	LeaderID         pgtype.UUID        `json:"leader_id"`
-	Outcome          string             `json:"outcome"`
-	Details          []byte             `json:"details"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-}
-
 type SquadMember struct {
 	ID         pgtype.UUID        `json:"id"`
 	SquadID    pgtype.UUID        `json:"squad_id"`
