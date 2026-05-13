@@ -397,6 +397,9 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, squadMemberToResponse(sm))
+	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{
+		"squad_id": uuidToString(squad.ID),
+	})
 }
 
 func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
@@ -439,6 +442,9 @@ func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{
+		"squad_id": uuidToString(squad.ID),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -479,6 +485,9 @@ func (h *Handler) UpdateSquadMemberRole(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{
+		"squad_id": uuidToString(squad.ID),
+	})
 	writeJSON(w, http.StatusOK, squadMemberToResponse(sm))
 }
 

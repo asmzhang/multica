@@ -59,13 +59,13 @@ export function SquadDetailPage() {
   const squadId = pathname.split("/").pop() ?? "";
 
   const { data: squad, refetch: refetchSquad } = useQuery<Squad>({
-    queryKey: ["squad", workspace?.id, squadId],
+    queryKey: [...workspaceKeys.squads(wsId), squadId],
     queryFn: () => api.getSquad(squadId),
     enabled: !!workspace?.id && !!squadId,
   });
 
   const { data: members = [], refetch: refetchMembers } = useQuery<SquadMember[]>({
-    queryKey: ["squad-members", workspace?.id, squadId],
+    queryKey: [...workspaceKeys.squads(wsId), squadId, "members"],
     queryFn: () => api.listSquadMembers(squadId),
     enabled: !!workspace?.id && !!squadId,
   });

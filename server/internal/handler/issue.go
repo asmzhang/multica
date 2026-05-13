@@ -1656,6 +1656,10 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 		if squad.ArchivedAt.Valid {
 			return http.StatusBadRequest, "cannot assign to an archived squad"
 		}
+		leader, err := h.Queries.GetAgent(ctx, squad.LeaderID)
+		if err != nil || leader.ArchivedAt.Valid {
+			return http.StatusBadRequest, "squad leader is archived; cannot assign to this squad"
+		}
 		return 0, ""
 	default:
 		return http.StatusBadRequest, "assignee_type must be 'member', 'agent', or 'squad'"
