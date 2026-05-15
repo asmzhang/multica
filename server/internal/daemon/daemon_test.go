@@ -1094,6 +1094,124 @@ func TestExecuteAndDrain_ContextCancelled_ReportsCancelled(t *testing.T) {
 	}
 }
 
+// idleWatchdogBackend simulates the MUL-2225 hang: emit one message to mark
+// activity, then go silent forever. With a short AgentIdleWatchdog, the
+// watchdog should fire and short-circuit executeAndDrain instead of waiting
+// for the full drainTimeout (which is ~21 minutes by default).
+type idleWatchdogBackend struct {
+	emitOne bool // when true, emit one message before going silent; when false, never emit anything
+}
+
+func (b idleWatchdogBackend) Execute(_ context.Context, _ string, _ agent.ExecOptions) (*agent.Session, error) {
+	msgCh := make(chan agent.Message, 1)
+	resCh := make(chan agent.Result)
+	if b.emitOne {
+		msgCh <- agent.Message{Type: agent.MessageText, Content: "hello"}
+	}
+	// Deliberately do NOT close msgCh and never write to resCh — this models
+	// a backend whose subprocess is hung and will never naturally complete.
+	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
+func TestExecuteAndDrain_IdleWatchdog_FiresOnInactivity(t *testing.T) {
+	t.Parallel()
+
+	d := newTestDaemon(t)
+	d.cfg.AgentIdleWatchdog = 50 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	start := time.Now()
+	result, _, err := d.executeAndDrain(ctx, idleWatchdogBackend{emitOne: true}, "p", agent.ExecOptions{}, slog.Default(), "t-idle")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "idle_watchdog" {
+		t.Fatalf("expected status=idle_watchdog, got %q (err=%q)", result.Status, result.Error)
+	}
+	if !strings.Contains(result.Error, "idle watchdog") {
+		t.Fatalf("expected error to mention idle watchdog, got %q", result.Error)
+	}
+	// The watchdog should fire within a few ticks (interval = window/2 with
+	// no floor for sub-minute windows). 5× window is generous and keeps the
+	// test from racing in slow CI.
+	if elapsed := time.Since(start); elapsed > 5*d.cfg.AgentIdleWatchdog {
+		t.Fatalf("watchdog took too long to fire: %s (window=%s)", elapsed, d.cfg.AgentIdleWatchdog)
+	}
+}
+
+func TestExecuteAndDrain_IdleWatchdog_FiresWhenNoMessageEverArrives(t *testing.T) {
+	t.Parallel()
+
+	d := newTestDaemon(t)
+	d.cfg.AgentIdleWatchdog = 50 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	// emitOne=false models a backend that hangs before sending any message.
+	// lastActivityAt is initialised at executeAndDrain entry, so the same
+	// window applies even with zero traffic.
+	result, _, err := d.executeAndDrain(ctx, idleWatchdogBackend{emitOne: false}, "p", agent.ExecOptions{}, slog.Default(), "t-idle-zero")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "idle_watchdog" {
+		t.Fatalf("expected status=idle_watchdog when backend never emits, got %q (err=%q)", result.Status, result.Error)
+	}
+}
+
+func TestExecuteAndDrain_IdleWatchdog_DisabledWhenZero(t *testing.T) {
+	t.Parallel()
+
+	d := newTestDaemon(t)
+	// Default zero value — watchdog disabled. Without a parent cancel the
+	// blockingBackend would otherwise hang the test, so we cancel after a
+	// short delay to confirm the run does NOT terminate as idle_watchdog.
+	d.cfg.AgentIdleWatchdog = 0
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(80*time.Millisecond, cancel)
+
+	result, _, err := d.executeAndDrain(ctx, idleWatchdogBackend{emitOne: true}, "p", agent.ExecOptions{}, slog.Default(), "t-idle-off")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status == "idle_watchdog" {
+		t.Fatalf("watchdog should not fire when AgentIdleWatchdog=0, got status=%q", result.Status)
+	}
+	if result.Status != "cancelled" {
+		t.Fatalf("expected status=cancelled (parent ctx fired), got %q", result.Status)
+	}
+}
+
+func TestExecuteAndDrain_IdleWatchdog_HappyPathDoesNotFire(t *testing.T) {
+	t.Parallel()
+
+	d := newTestDaemon(t)
+	d.cfg.AgentIdleWatchdog = 200 * time.Millisecond
+
+	// fakeBackend completes immediately with a normal result, well inside the
+	// idle window. The watchdog must not corrupt the disposition.
+	fb := &fakeBackend{
+		results: []agent.Result{
+			{Status: "completed", Output: "done"},
+		},
+	}
+
+	result, _, err := d.executeAndDrain(context.Background(), fb, "p", agent.ExecOptions{}, slog.Default(), "t-idle-happy")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("expected status=completed on happy path, got %q (err=%q)", result.Status, result.Error)
+	}
+	if result.Output != "done" {
+		t.Fatalf("expected output preserved, got %q", result.Output)
+	}
+}
+
 func TestEnsureRepoReadyFastPathDoesNotRefresh(t *testing.T) {
 	t.Parallel()
 
