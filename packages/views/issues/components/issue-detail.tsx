@@ -8,6 +8,7 @@ import { useNavigation } from "../../navigation";
 import {
   Archive,
   Calendar,
+  CalendarDays,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -17,6 +18,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  Tag,
   Users,
 } from "lucide-react";
 import { PageHeader } from "../../layout/page-header";
@@ -1255,14 +1257,27 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                   <Plus className="h-3 w-3 shrink-0" />
                   <span>{t(($) => $.detail.add_property_action)}</span>
                 </PopoverTrigger>
-                <PopoverContent align="start" className="w-48 p-1">
+                {/* Item visuals mirror the inspector rows' typography
+                    (text-xs, muted icons) and each option leads with the
+                    icon the resulting picker uses, so the dropdown reads
+                    as a preview of what will show up below. */}
+                <PopoverContent align="start" className="w-44 p-1">
                   {OPTIONAL_PROP_KEYS.filter((k) => !visibleOptionalProps.has(k)).map((k) => (
                     <button
                       key={k}
                       type="button"
                       onClick={() => addOptionalProp(k)}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent transition-colors"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs text-foreground/90 transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
                     >
+                      {k === "priority" && (
+                        <PriorityIcon priority="medium" inheritColor className="text-muted-foreground" />
+                      )}
+                      {k === "due_date" && (
+                        <CalendarDays className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                      {k === "labels" && (
+                        <Tag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      )}
                       <span className="truncate">
                         {k === "priority" && t(($) => $.detail.prop_priority)}
                         {k === "due_date" && t(($) => $.detail.prop_due_date)}
