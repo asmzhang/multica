@@ -152,8 +152,12 @@ func (c *Client) ClaimTask(ctx context.Context, runtimeID string) (*Task, error)
 	return resp.Task, nil
 }
 
-func (c *Client) StartTask(ctx context.Context, taskID string) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
+func (c *Client) StartTask(ctx context.Context, taskID string, claimToken string) error {
+	body := map[string]any{}
+	if claimToken != "" {
+		body["claim_token"] = claimToken
+	}
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), body, nil)
 }
 
 func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, step, total int) error {

@@ -1852,7 +1852,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		taskLog.Info("picked task", "issue", task.IssueID, "agent", agentName, "provider", provider)
 	}
 
-	if err := d.client.StartTask(ctx, task.ID); err != nil {
+	if err := d.client.StartTask(ctx, task.ID, task.ClaimToken); err != nil {
 		taskLog.Error("start task failed", "error", err)
 		if failErr := d.client.FailTask(ctx, task.ID, fmt.Sprintf("start task failed: %s", err.Error()), "", "", "agent_error"); failErr != nil {
 			taskLog.Error("fail task after start error", "error", failErr)

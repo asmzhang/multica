@@ -80,6 +80,7 @@ func runRuntimeSweeper(ctx context.Context, queries *db.Queries, liveness handle
 		case <-ticker.C:
 			sweepStaleRuntimes(ctx, queries, liveness, taskSvc, bus)
 			sweepStaleTasks(ctx, queries, taskSvc, bus)
+			sweepExpiredClaimLeases(ctx, taskSvc)
 			sweepExpiredQueuedTasks(ctx, queries, taskSvc)
 			gcRuntimes(ctx, queries, bus)
 		}
@@ -254,6 +255,17 @@ func sweepStaleTasks(ctx context.Context, queries *db.Queries, taskSvc *service.
 
 	slog.Info("task sweeper: failed stale tasks", "count", len(failedTasks))
 	taskSvc.HandleFailedTasks(ctx, failedTasks)
+}
+
+// sweepExpiredClaimLeases requeues dispatched tasks whose claim lease has
+// expired (daemon never called StartTask with the token). This is the
+// backstop that prevents a lost claim response from becoming a permanent
+// unstarted task.
+func sweepExpiredClaimLeases(ctx context.Context, taskSvc *service.TaskService) {
+	if taskSvc == nil {
+		return
+	}
+	taskSvc.RequeueExpiredClaimLeases(ctx)
 }
 
 // sweepExpiredQueuedTasks fails tasks that have been sitting in 'queued' for

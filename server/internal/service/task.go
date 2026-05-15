@@ -51,6 +51,15 @@ type TaskWakeupNotifier interface {
 // recognisable preview of a one-paragraph comment.
 const triggerSummaryMaxLen = 200
 
+// claimLeaseSeconds is the duration (in seconds) a dispatched task's claim
+// lease is valid. The daemon must call StartTask with the claim_token within
+// this window; otherwise the expired-lease sweeper requeues the task.
+const claimLeaseSeconds = 60.0
+
+// requeueMaxPerTick caps how many expired-lease rows a single sweeper tick
+// requeues back to 'queued'. Keeps the sweep transaction short.
+const RequeueMaxPerTick = 50
+
 // truncateForSummary returns s shortened to maxRunes, with a trailing
 // `…` when truncated. Operates on runes (not bytes) so multibyte characters
 // — Chinese / emoji — count as one each. Strips surrounding whitespace
@@ -764,7 +773,10 @@ func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.A
 	}
 
 	t0 = time.Now()
-	task, err := s.Queries.ClaimAgentTask(ctx, agentID)
+	task, err := s.Queries.ClaimAgentTaskWithLease(ctx, db.ClaimAgentTaskWithLeaseParams{
+		AgentID:      agentID,
+		LeaseSeconds: claimLeaseSeconds,
+	})
 	claimAgentMs = time.Since(t0).Milliseconds()
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -913,8 +925,19 @@ func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, sta
 
 // StartTask transitions a dispatched task to running.
 // Issue status is NOT changed here — the agent manages it via the CLI.
-func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
-	task, err := s.Queries.StartAgentTask(ctx, taskID)
+// When claimToken is valid, uses the token-verified path; otherwise falls
+// back to the legacy tokenless start for old daemons.
+func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID, claimToken pgtype.UUID) (*db.AgentTaskQueue, error) {
+	var task db.AgentTaskQueue
+	var err error
+	if claimToken.Valid {
+		task, err = s.Queries.StartAgentTaskWithClaimToken(ctx, db.StartAgentTaskWithClaimTokenParams{
+			ID:         taskID,
+			ClaimToken: claimToken,
+		})
+	} else {
+		task, err = s.Queries.StartAgentTask(ctx, taskID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("start task: %w", err)
 	}
@@ -922,6 +945,25 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	slog.Info("task started", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskStarted(ctx, task)
 	return &task, nil
+}
+
+// RequeueExpiredClaimLeases moves dispatched tasks whose claim lease has
+// expired back to 'queued' and sends wakeup notifications so they can be
+// re-claimed. Returns the number of tasks requeued.
+func (s *TaskService) RequeueExpiredClaimLeases(ctx context.Context) int {
+	requeued, err := s.Queries.RequeueExpiredClaimLeases(ctx, RequeueMaxPerTick)
+	if err != nil {
+		slog.Warn("requeue expired claim leases failed", "error", err)
+		return 0
+	}
+	if len(requeued) == 0 {
+		return 0
+	}
+	slog.Info("requeued expired claim leases", "count", len(requeued))
+	for _, task := range requeued {
+		s.notifyTaskAvailable(task)
+	}
+	return len(requeued)
 }
 
 // CompleteTask marks a task as completed.

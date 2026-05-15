@@ -1500,7 +1500,21 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.TaskService.StartTask(r.Context(), parseUUID(taskID))
+	// Read optional claim_token from body (new daemons send it; old ones don't).
+	var body struct {
+		ClaimToken string `json:"claim_token"`
+	}
+	// Best-effort decode; empty body is fine for legacy daemons.
+	json.NewDecoder(r.Body).Decode(&body)
+
+	var claimToken pgtype.UUID
+	if body.ClaimToken != "" {
+		if parsed, err := util.ParseUUID(body.ClaimToken); err == nil {
+			claimToken = parsed
+		}
+	}
+
+	task, err := h.TaskService.StartTask(r.Context(), parseUUID(taskID), claimToken)
 	if err != nil {
 		slog.Warn("start task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
